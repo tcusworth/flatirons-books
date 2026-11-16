@@ -1,42 +1,21 @@
 import Link from "next/link";
-import { db } from "@/lib/db";
+import { listTransactionRows } from "@/lib/transactions";
 import { getBusiness } from "@/lib/business";
 import { fmtDate } from "@/lib/money";
 import { Empty, Money, PageHeader } from "@/components/ui";
 import { ActionButton } from "@/components/ActionButton";
 import { reopenTxn } from "../actions";
 
-type Row = {
-  id: string;
-  txn_date: string;
-  description: string;
-  merchant: string | null;
-  amount_cents: number;
-  status: string;
-  bank_name: string;
-  category: string | null;
-  category_id: string | null;
-  source: string;
-};
-
 export default async function TransactionsPage({ searchParams }: { searchParams: Promise<{ status?: string; q?: string }> }) {
   const sp = await searchParams;
   const status = sp.status === "excluded" ? "excluded" : "posted";
   const q = (sp.q ?? "").trim();
   const biz = await getBusiness();
-  const sql = db();
-  const rows = await sql<Row[]>`
-    select t.id, t.txn_date, t.description, t.merchant, t.amount_cents, t.status, b.name as bank_name, t.source,
-      (select string_agg(a.name, ', ') from journal_lines l join accounts a on a.id = l.account_id
-        where l.entry_id = t.journal_entry_id and l.account_id <> b.ledger_account_id) as category,
-      (select l.account_id from journal_lines l where l.entry_id = t.journal_entry_id and l.account_id <> b.ledger_account_id limit 1) as category_id
-    from bank_transactions t join bank_accounts b on b.id = t.bank_account_id
-    where t.business_id = ${biz.id} and t.status = ${status}
-      ${q ? sql`and (t.description ilike ${"%" + q + "%"} or t.merchant ilike ${"%" + q + "%"})` : sql``}
-    order by t.txn_date desc, t.created_at desc limit 500`;
+
+  const rows = await listTransactionRows(biz.id, status, q);
   return (
     <>
-      <PageHeader title="Transactions" subtitle="Approved and excluded bank lines. Undo sends a line back to the inbox.">
+      <PageHeader title="Transactions" subtitle="Approved bank lines and journal entries, plus excluded bank lines. Undo sends a bank line back to the inbox.">
         <form className="flex gap-2">
           <input type="hidden" name="status" value={status} />
           <input name="q" defaultValue={q} placeholder="Search" className="input w-48" />
@@ -65,20 +44,24 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
             </thead>
             <tbody className="divide-y divide-black/[0.05]">
               {rows.map((r) => (
-                <tr key={r.id}>
+                <tr key={r.key}>
                   <td className="td whitespace-nowrap text-muted">{fmtDate(r.txn_date)}</td>
                   <td className="td">
-                    <p className="font-medium">{r.merchant || r.description}</p>
-                    <p className="text-xs text-muted">{r.bank_name}</p>
+                    <p className="font-medium">{r.title}</p>
+                    <p className="text-xs text-muted">{r.subtitle}</p>
                   </td>
                   <td className="td">
                     {r.category_id ? <Link className="hover:underline" href={`/accounts/${r.category_id}`}>{r.category}</Link> : <span className="text-muted">—</span>}
                   </td>
-                  <td className="td text-right"><Money cents={-r.amount_cents} flow /></td>
+                  <td className="td text-right"><Money cents={Number(r.display_cents)} flow /></td>
                   <td className="td text-right">
-                    <ActionButton action={reopenTxn.bind(null, r.id)} confirm={r.status === "posted" ? "Remove from books?" : undefined}>
-                      Undo
-                    </ActionButton>
+                    {r.kind === "bank" && r.txn_id ? (
+                      <ActionButton action={reopenTxn.bind(null, r.txn_id)} confirm={r.status === "posted" ? "Remove from books?" : undefined}>
+                        Undo
+                      </ActionButton>
+                    ) : (
+                      <Link href="/journal" className="btn-ghost">Journal</Link>
+                    )}
                   </td>
                 </tr>
               ))}

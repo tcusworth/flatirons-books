@@ -198,3 +198,28 @@ test("inbox: categorize, post, remember, transfer, report, undo", async () => {
   const reg = await R.accountRegister(bizId, chkLedger.ledger_account_id, "2026-01-01", "2026-01-31");
   assert.equal(reg?.closing, 318160 + 30000);
 });
+
+test("transactions list includes manual journal lines on income/expense accounts", async () => {
+  const { listTransactionRows } = await import("../lib/transactions");
+  await db().begin((q) =>
+    L.createEntry(q, {
+      businessId: bizId, date: "2026-03-31", memo: "Software paid personally — March", source: "manual",
+      lines: [
+        { accountId: acct["5100"], debit: 2104, description: "2026-03-14 Zoom" },
+        { accountId: acct["5110"], debit: 1081, description: "Porkbun domain" },
+        { accountId: acct["3000"], credit: 3185, description: "Paid personally by owner" },
+      ],
+    })
+  );
+  const rows = await listTransactionRows(bizId, "posted", "");
+  const j = rows.filter((r) => r.kind === "journal");
+  assert.equal(j.length, 2, "owner's-contribution (equity) line is not listed");
+  const zoom = j.find((r) => r.title === "Zoom")!;
+  assert.equal(zoom.txn_date, "2026-03-14", "date taken from the line description");
+  assert.equal(Number(zoom.display_cents), -2104, "expense shows as money out");
+  const pork = j.find((r) => r.title === "Porkbun domain")!;
+  assert.equal(pork.txn_date, "2026-03-31", "falls back to the entry date");
+  assert.ok(rows.some((r) => r.kind === "bank"), "bank lines still listed");
+  assert.equal((await listTransactionRows(bizId, "posted", "zoom")).filter((r) => r.kind === "journal").length, 1);
+  assert.equal((await listTransactionRows(bizId, "excluded", "")).filter((r) => r.kind === "journal").length, 0);
+});
