@@ -1,0 +1,8 @@
+# Netlify deploys Next.js through its OpenNext adapter automatically; no plugin needed.
+[build]
+  # Apply db/schema.sql (idempotent) before every build, then build the app.
+  command = "npm run db:migrate && npm run build"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NEXT_TELEMETRY_DISABLED = "1"
